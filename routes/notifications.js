@@ -18,6 +18,15 @@ router.get("/", auth, async (req, res) => {
   res.json(notifications);
 });
 
+router.patch("/message/read", auth, async (req, res) => {
+  const { chatLink } = req.body;
+  await Notification.updateMany(
+    { receiver: req.user._id, link: chatLink, read: false }, // ✅ FIXED
+    { $set: { read: true } }
+  );
+  res.sendStatus(200);
+});
+
 // ✅ Mark a notification as read
 router.patch("/:id/read", auth, async (req, res) => {
   await Notification.findOneAndUpdate(
@@ -34,6 +43,58 @@ router.patch("/read/all", auth, async (req, res) => {
     { $set: { read: true } }
   );
   res.json({ msg: "All notifications marked as read" });
+});
+
+// ✅ Get unread notification count
+router.get("/unread-count", auth, async (req, res) => {
+  console.log("✅ Count request for user:", req.user._id); // <== Add this
+
+  const count = await Notification.countDocuments({
+    receiver: req.user._id,
+    read: false,
+  });
+
+  console.log("🔢 Unread count:", count); // <== And this
+
+  res.json({ count });
+});
+
+router.get("/unread-senders", auth, async (req, res) => {
+  const notifications = await Notification.aggregate([
+    { $match: { receiver: req.user._id, read: false } }, // ✅ FIXED
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: "$sender",
+        count: { $sum: 1 },
+        latestMessage: { $first: "$content" },
+        latestTime: { $first: "$createdAt" },
+        chatLink: { $first: "$link" },
+      },
+    },
+    {
+      $lookup: {
+        from: "users",
+        localField: "_id",
+        foreignField: "_id",
+        as: "senderInfo",
+      },
+    },
+    { $unwind: "$senderInfo" },
+    {
+      $project: {
+        senderId: "$_id",
+        name: "$senderInfo.name",
+        count: 1,
+        latestMessage: 1,
+        chatLink: 1,
+        latestTime: 1,
+      },
+    },
+    { $sort: { latestTime: -1 } },
+  ]);
+
+  res.json(notifications);
 });
 
 module.exports = router;

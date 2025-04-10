@@ -24,41 +24,44 @@ function initializeSocket(server) {
       }
     });
 
+    socket.on("joinRoom", (chatId) => {
+      if (chatId) {
+        socket.join(chatId.toString());
+        console.log(`💬 Joined chat room ${chatId}`);
+      }
+    });
+
     // 💬 Handle chat message
     socket.on(
       "sendMessage",
-      async ({ chatId, senderId, content, receiverId, senderName }) => {
+      async ({ chatId, senderId, receiverId, content }) => {
         try {
+          // Save message to DB
           const message = await Message.create({
             chat: chatId,
             sender: senderId,
             content,
           });
 
-          await Chat.findByIdAndUpdate(chatId, {
-            lastMessage: content,
-            updatedAt: new Date(),
-          });
+          const populatedMessage = await message.populate(
+            "sender",
+            "name email"
+          );
 
-          // 👉 Emit to receiver
-          io.to(receiverId.toString()).emit("receiveMessage", {
-            chatId,
-            senderId,
-            content,
-            createdAt: new Date(),
-          });
+          // Emit to sender and receiver so both see the message live
+          io.to(senderId).emit("receiveMessage", populatedMessage);
+          io.to(receiverId).emit("receiveMessage", populatedMessage);
 
-          // 🔔 Create + send notification
-          const notification = await Notification.create({
-            receiver: receiverId,
-            type: "chat",
-            refId: message._id,
-            text: `${senderName || "Someone"} sent you a message.`,
+          // Optional: create a notification for receiver
+          await Notification.create({
+            receiver: receiverId, // receiver (you already have this)
+            sender: senderId, // NEW FIELD – add this to Notification schema
+            type: "message",
+            content: content, // or `New message from ${populatedMessage.sender.name}`
+            link: `/chat/${chatId}`,
           });
-
-          io.to(receiverId.toString()).emit("newNotification", notification);
         } catch (err) {
-          console.error("❌ Error sending message via socket:", err);
+          console.error("Error sending message via socket:", err);
         }
       }
     );

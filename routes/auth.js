@@ -7,7 +7,7 @@ const protect = require("../middleware/auth");
 const router = express.Router();
 
 const generateAccessToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "15m" });
+  jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
 const generateRefreshToken = (userId) =>
   jwt.sign({ id: userId }, process.env.REFRESH_SECRET, { expiresIn: "7d" });

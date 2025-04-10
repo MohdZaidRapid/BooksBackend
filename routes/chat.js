@@ -2,6 +2,7 @@ const express = require("express");
 const Chat = require("../models/Chat");
 const Book = require("../models/Book");
 const protect = require("../middleware/auth");
+const Message = require("../models/Message");
 
 const router = express.Router();
 
@@ -51,14 +52,46 @@ router.get("/", protect, async (req, res) => {
 
 // 💬 Get Messages for a Chat
 router.get("/:chatId/messages", protect, async (req, res) => {
-  try {
-    const messages = await Message.find({ chat: req.params.chatId })
-      .populate("sender", "name email")
-      .sort({ createdAt: 1 });
+  const messages = await Message.find({ chat: req.params.chatId })
+    .populate("sender", "name email")
+    .sort({ createdAt: 1 });
 
-    res.json(messages);
+  res.json(messages);
+});
+
+// ✅ Get a single chat by ID
+router.get("/:chatId", protect, async (req, res) => {
+  try {
+    const chat = await Chat.findById(req.params.chatId)
+      .populate("book", "title")
+      .populate("participants", "name email");
+
+    if (!chat) return res.status(404).json({ message: "Chat not found" });
+
+    // Optional: Ensure user is part of this chat
+    const isParticipant = chat.participants.some(
+      (p) => p._id.toString() === req.user._id.toString()
+    );
+    if (!isParticipant)
+      return res.status(403).json({ message: "Access denied" });
+
+    res.json(chat);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching messages" });
+    console.error("Chat fetch error:", error);
+    res.status(500).json({ message: "Error fetching chat" });
+  }
+});
+
+router.get("/", protect, async (req, res) => {
+  try {
+    const chats = await Chat.find({ participants: req.user._id })
+      .populate("participants", "name email")
+      .populate("book", "title image")
+      .sort({ updatedAt: -1 });
+
+    res.json(chats);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to get chats" });
   }
 });
 
