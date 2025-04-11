@@ -3,6 +3,8 @@ const Book = require("../models/Book");
 const mongoose = require("mongoose");
 const { clearCache, getCache, setCache } = require("../utils/cache");
 const protect = require("../middleware/auth");
+const Chat = require("../models/Chat");
+const Message = require("../models/Message");
 
 const router = express.Router();
 
@@ -211,5 +213,7 @@ router.delete("/:id", protect, async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+
 
 module.exports = router;
