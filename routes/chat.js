@@ -64,7 +64,7 @@ router.get("/:chatId/messages", protect, async (req, res) => {
 router.get("/:chatId", protect, async (req, res) => {
   try {
     const chat = await Chat.findById(req.params.chatId)
-      .populate("book", "title")
+      .populate("book", "title image price condition")
       .populate("participants", "name email");
 
     if (!chat) return res.status(404).json({ message: "Chat not found" });
