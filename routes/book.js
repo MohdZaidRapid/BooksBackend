@@ -41,7 +41,7 @@ router.post("/", protect, upload.single("image"), async (req, res) => {
       author,
       description,
       price: price || 0,
-      isFree: isFree === "true",
+      isFree: isFree === true,
       condition,
       country,
       city,
@@ -235,7 +235,7 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
     if (author) book.author = author;
     if (description) book.description = description;
     if (price !== undefined) book.price = price;
-    if (isFree !== undefined) book.isFree = isFree === "true";
+    if (isFree !== undefined) book.isFree = isFree === true;
     if (condition) book.condition = condition;
     if (country) book.country = country;
     if (city) book.city = city;
