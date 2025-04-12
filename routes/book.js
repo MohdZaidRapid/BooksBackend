@@ -3,45 +3,74 @@ const Book = require("../models/Book");
 const mongoose = require("mongoose");
 const { clearCache, getCache, setCache } = require("../utils/cache");
 const protect = require("../middleware/auth");
+const authMiddleware = require("../middleware/auth");
 const Chat = require("../models/Chat");
 const Message = require("../models/Message");
+const upload = require("../middleware/uploadMiddleware");
+const {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} = require("../utils/cloudinaryUtils");
+const fs = require("fs");
 
 const router = express.Router();
 
+const dir = "./uploads";
+if (!fs.existsSync(dir)) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 // 🔼 Add Book
-router.post("/", protect, async (req, res) => {
+router.post("/", protect, upload.single("image"), async (req, res) => {
   try {
     const {
       title,
       author,
       description,
-      image,
       price,
-      condition,
       isFree,
+      condition,
       country,
       city,
       area,
     } = req.body;
 
-    const newBook = await Book.create({
+    // Create book without image first
+    const bookData = {
       title,
       author,
       description,
-      image,
-      price,
+      price: price || 0,
+      isFree: isFree === "true",
       condition,
-      isFree,
       country,
       city,
       area,
-      listedBy: req.user._id,
-    });
-    await clearCache("books:*");
-    res.status(201).json(newBook);
-  } catch (error) {
-    console.error("Create Book Error:", error);
-    res.status(500).json({ message: "Server error" });
+      listedBy: req.user.id, // Assuming user ID is stored in req.user from authMiddleware
+    };
+
+    // If image was uploaded, process it
+    if (req.file) {
+      try {
+        const result = await uploadToCloudinary(req.file.path);
+        bookData.image = result.secure_url; // Store only the URL in your schema
+      } catch (uploadError) {
+        console.error("Error uploading to Cloudinary:", uploadError);
+        return res.status(500).json({
+          message: "Error uploading image",
+          error: uploadError.message,
+        });
+      }
+    }
+
+    // Save book to database
+    const book = new Book(bookData);
+    await book.save();
+
+    res.status(201).json(book);
+  } catch (err) {
+    console.error("Error creating book:", err);
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -113,7 +142,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.get("/me", protect, async (req, res) => {
+router.get("/me", authMiddleware, async (req, res) => {
   try {
     const books = await Book.find({ listedBy: req.user._id }).sort({
       createdAt: -1,
@@ -173,47 +202,148 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.put("/:id", protect, async (req, res) => {
+router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
   try {
     const book = await Book.findById(req.params.id);
 
-    if (!book) return res.status(404).json({ message: "Book not found" });
-
-    if (book.listedBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Unauthorized" });
+    // Check if book exists
+    if (!book) {
+      return res.status(404).json({ message: "Book not found" });
     }
 
-    Object.assign(book, req.body);
-    await book.save();
+    // Check if user is owner of book
+    if (book.listedBy.toString() !== req.user.id) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to update this book" });
+    }
 
-    // Optional: clear cache if you cache individual book or list
-    res.json(book);
+    // Update fields from request body
+    const {
+      title,
+      author,
+      description,
+      price,
+      isFree,
+      condition,
+      country,
+      city,
+      area,
+    } = req.body;
+
+    if (title) book.title = title;
+    if (author) book.author = author;
+    if (description) book.description = description;
+    if (price !== undefined) book.price = price;
+    if (isFree !== undefined) book.isFree = isFree === "true";
+    if (condition) book.condition = condition;
+    if (country) book.country = country;
+    if (city) book.city = city;
+    if (area) book.area = area;
+
+    // Handle image update if provided
+    if (req.file) {
+      try {
+        // If there's an existing image, delete it from Cloudinary
+        if (book.image) {
+          await deleteFromCloudinary(book.image);
+        }
+
+        // Upload new image
+        const result = await uploadToCloudinary(req.file.path);
+        book.image = result.secure_url;
+      } catch (uploadError) {
+        console.error("Error updating image in Cloudinary:", uploadError);
+        return res.status(500).json({
+          message: "Error updating image",
+          error: uploadError.message,
+        });
+      }
+    }
+
+    // Save updated book
+    const updatedBook = await book.save();
+    res.json(updatedBook);
   } catch (err) {
-    console.error("Update Book Error:", err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: err.message });
   }
 });
 
-router.delete("/:id", protect, async (req, res) => {
+// Delete a book
+router.delete("/:id", authMiddleware, async (req, res) => {
   try {
-    const deletedBook = await Book.findOneAndDelete({
-      _id: req.params.id,
-      listedBy: req.user._id,
+    const book = await Book.findById(req.params.id);
+
+    if (!book) {
+      return res.status(404).json({ message: "Book not found" });
+    }
+
+    // Check if user is owner of book
+    if (book.listedBy.toString() !== req.user.id) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this book" });
+    }
+
+    // Delete image from Cloudinary if exists
+    if (book.image) {
+      await deleteFromCloudinary(book.image);
+    }
+
+    // Delete book from database
+    await Book.findByIdAndDelete(req.params.id);
+
+    res.json({ message: "Book deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/user/:userId", async (req, res) => {
+  try {
+    const books = await Book.find({ listedBy: req.params.userId }).sort({
+      createdAt: -1,
     });
 
-    if (!deletedBook) {
-      return res
-        .status(404)
-        .json({ message: "Book not found or unauthorized" });
-    }
-
-    res.json({ message: "Book deleted" });
+    res.json(books);
   } catch (err) {
-    console.error("Delete Book Error:", err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: err.message });
   }
 });
 
+// Get my books (books listed by logged in user)
+router.get("/my/books", authMiddleware, async (req, res) => {
+  try {
+    const books = await Book.find({ listedBy: req.user.id }).sort({
+      createdAt: -1,
+    });
 
+    res.json(books);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Search books
+router.get("/search/:term", async (req, res) => {
+  try {
+    const searchTerm = req.params.term;
+    const regex = new RegExp(searchTerm, "i");
+
+    const books = await Book.find({
+      $or: [
+        { title: { $regex: regex } },
+        { author: { $regex: regex } },
+        { description: { $regex: regex } },
+      ],
+    })
+      .populate("listedBy", "name email")
+      .sort({ createdAt: -1 });
+
+    res.json(books);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 module.exports = router;
